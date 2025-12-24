@@ -138,9 +138,11 @@ export function Globe({ visitors, currentVisitorId, onVisitorClick }: GlobeCompo
     // Auto-rotate (only when user is not interacting)
     let lastTime = Date.now();
     let isUserInteracting = false;
+    let isViewingVisitor = false;
+    let resumeTimeout: ReturnType<typeof setTimeout> | null = null;
 
     const rotate = () => {
-      if (isUserInteracting) return;
+      if (isUserInteracting || isViewingVisitor) return;
       const now = Date.now();
       const delta = (now - lastTime) / 1000;
       lastTime = now;
@@ -153,48 +155,31 @@ export function Globe({ visitors, currentVisitorId, onVisitorClick }: GlobeCompo
     const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
     const canvas = viewer.scene.canvas;
 
+    const pauseRotation = () => {
+      isUserInteracting = true;
+      lastTime = Date.now();
+      if (resumeTimeout) clearTimeout(resumeTimeout);
+    };
+
+    const scheduleResumeRotation = () => {
+      if (resumeTimeout) clearTimeout(resumeTimeout);
+      resumeTimeout = setTimeout(() => {
+        if (!isViewingVisitor) {
+          isUserInteracting = false;
+          lastTime = Date.now();
+        }
+      }, 3000);
+    };
+
     // Pause rotation during user interaction
-    handler.setInputAction(() => {
-      isUserInteracting = true;
-      lastTime = Date.now();
-    }, Cesium.ScreenSpaceEventType.LEFT_DOWN);
+    handler.setInputAction(pauseRotation, Cesium.ScreenSpaceEventType.LEFT_DOWN);
+    handler.setInputAction(pauseRotation, Cesium.ScreenSpaceEventType.RIGHT_DOWN);
+    handler.setInputAction(pauseRotation, Cesium.ScreenSpaceEventType.MIDDLE_DOWN);
+    handler.setInputAction(pauseRotation, Cesium.ScreenSpaceEventType.WHEEL);
 
-    handler.setInputAction(() => {
-      isUserInteracting = true;
-      lastTime = Date.now();
-    }, Cesium.ScreenSpaceEventType.RIGHT_DOWN);
-
-    handler.setInputAction(() => {
-      isUserInteracting = true;
-      lastTime = Date.now();
-    }, Cesium.ScreenSpaceEventType.MIDDLE_DOWN);
-
-    handler.setInputAction(() => {
-      isUserInteracting = true;
-      lastTime = Date.now();
-    }, Cesium.ScreenSpaceEventType.WHEEL);
-
-    handler.setInputAction(() => {
-      // Resume rotation after 2 seconds of no interaction
-      setTimeout(() => {
-        isUserInteracting = false;
-        lastTime = Date.now();
-      }, 2000);
-    }, Cesium.ScreenSpaceEventType.LEFT_UP);
-
-    handler.setInputAction(() => {
-      setTimeout(() => {
-        isUserInteracting = false;
-        lastTime = Date.now();
-      }, 2000);
-    }, Cesium.ScreenSpaceEventType.RIGHT_UP);
-
-    handler.setInputAction(() => {
-      setTimeout(() => {
-        isUserInteracting = false;
-        lastTime = Date.now();
-      }, 2000);
-    }, Cesium.ScreenSpaceEventType.MIDDLE_UP);
+    handler.setInputAction(scheduleResumeRotation, Cesium.ScreenSpaceEventType.LEFT_UP);
+    handler.setInputAction(scheduleResumeRotation, Cesium.ScreenSpaceEventType.RIGHT_UP);
+    handler.setInputAction(scheduleResumeRotation, Cesium.ScreenSpaceEventType.MIDDLE_UP);
 
     // Change cursor on hover over entities
     handler.setInputAction((movement: { endPosition: Cesium.Cartesian2 }) => {
@@ -210,8 +195,15 @@ export function Globe({ visitors, currentVisitorId, onVisitorClick }: GlobeCompo
       if (Cesium.defined(picked) && picked.id && picked.id.properties) {
         const visitorData = picked.id.properties.visitor?.getValue();
         if (visitorData) {
+          // Toggle viewing visitor - stop rotation while viewing
+          isViewingVisitor = !isViewingVisitor;
+          if (resumeTimeout) clearTimeout(resumeTimeout);
           onVisitorClickRef.current(visitorData);
         }
+      } else {
+        // Clicked elsewhere - resume rotation
+        isViewingVisitor = false;
+        scheduleResumeRotation();
       }
     }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
