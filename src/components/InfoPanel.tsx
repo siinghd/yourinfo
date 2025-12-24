@@ -148,6 +148,39 @@ export function InfoPanel({ visitor, isCurrentUser, onClose, aiLoading }: InfoPa
           </InfoSection>
         )}
 
+        {/* Location Section - Second! */}
+        <InfoSection title="Location" icon="O">
+          <InfoRow
+            label="IP Address"
+            value={server.ip}
+            tooltip="Your public IP address visible to every website"
+            warning={isCurrentUser}
+          />
+          {server.geo && (
+            <>
+              <InfoRow label="City" value={server.geo.city} />
+              <InfoRow label="Region" value={server.geo.region} />
+              <InfoRow label="Country" value={`${server.geo.country} (${server.geo.countryCode})`} />
+              <InfoRow
+                label="Coordinates"
+                value={isCurrentUser
+                  ? `${server.geo.lat.toFixed(4)}, ${server.geo.lng.toFixed(4)}`
+                  : `~${server.geo.lat.toFixed(1)}, ${server.geo.lng.toFixed(1)} (APPROX)`
+                }
+                tooltip={isCurrentUser ? undefined : "Approximate location for privacy"}
+                warning={isCurrentUser}
+              />
+              <InfoRow label="Timezone" value={server.geo.timezone} />
+              {isCurrentUser && (
+                <>
+                  <InfoRow label="ISP" value={server.geo.isp} tooltip="Your Internet Service Provider" />
+                  <InfoRow label="Organization" value={server.geo.org} />
+                </>
+              )}
+            </>
+          )}
+        </InfoSection>
+
         {/* User Profile - What advertisers think about you */}
         {client && (
           <InfoSection title={client.userProfile.aiGenerated ? "AI Analysis of You" : "What Advertisers Know About You"} icon="$">
@@ -545,30 +578,6 @@ export function InfoPanel({ visitor, isCurrentUser, onClose, aiLoading }: InfoPa
           </InfoSection>
         )}
 
-        {/* Location Section */}
-        <InfoSection title="Location" icon="O">
-          <InfoRow
-            label="IP Address"
-            value={server.ip}
-            tooltip="Your public IP address visible to every website"
-            warning
-          />
-          {server.geo && (
-            <>
-              <InfoRow label="City" value={server.geo.city} />
-              <InfoRow label="Region" value={server.geo.region} />
-              <InfoRow label="Country" value={`${server.geo.country} (${server.geo.countryCode})`} />
-              <InfoRow
-                label="Coordinates"
-                value={`${server.geo.lat.toFixed(4)}, ${server.geo.lng.toFixed(4)}`}
-                warning
-              />
-              <InfoRow label="Timezone" value={server.geo.timezone} />
-              <InfoRow label="ISP" value={server.geo.isp} tooltip="Your Internet Service Provider" />
-              <InfoRow label="Organization" value={server.geo.org} />
-            </>
-          )}
-        </InfoSection>
 
         {/* WebRTC Local IPs */}
         {client && client.webrtcLocalIPs.length > 0 && (
