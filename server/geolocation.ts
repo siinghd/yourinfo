@@ -1,66 +1,73 @@
 /**
- * IP Geolocation service using ip-api.com
+ * IP Geolocation service using local MaxMind GeoLite2 database
+ * No API rate limits - unlimited lookups!
  */
 
+import { Reader } from '@maxmind/geoip2-node';
 import type { GeoLocation } from '../src/types';
+import { join } from 'path';
 
-/** Cache for geolocation lookups to reduce API calls */
-const geoCache = new Map<string, { data: GeoLocation | null; timestamp: number }>();
+/** Path to GeoLite2 database */
+const DB_PATH = join(import.meta.dir, '../data/GeoLite2-City.mmdb');
 
-/** Cache TTL in milliseconds (1 hour) */
-const CACHE_TTL = 60 * 60 * 1000;
+/** MaxMind reader instance */
+let reader: Reader | null = null;
+
+/** Initialize the database reader */
+async function initReader(): Promise<Reader | null> {
+  if (reader) return reader;
+
+  try {
+    reader = await Reader.open(DB_PATH);
+    console.log('GeoLite2 database loaded successfully');
+    return reader;
+  } catch (error) {
+    console.error('Failed to load GeoLite2 database:', error);
+    return null;
+  }
+}
+
+// Initialize on startup
+initReader();
 
 /**
  * Look up geolocation data for an IP address
- * Uses ip-api.com free tier (45 requests/minute from server)
+ * Uses local MaxMind database - no rate limits!
  */
 export async function getGeolocation(ip: string): Promise<GeoLocation | null> {
-  // Check cache first
-  const cached = geoCache.get(ip);
-  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
-    return cached.data;
-  }
-
   // Skip localhost/private IPs
   if (isPrivateIP(ip)) {
     return null;
   }
 
   try {
-    const response = await fetch(
-      `http://ip-api.com/json/${ip}?fields=status,message,country,countryCode,region,regionName,city,lat,lon,timezone,isp,org,as`
-    );
-
-    if (!response.ok) {
-      console.error(`Geolocation API error: ${response.status}`);
+    const db = await initReader();
+    if (!db) {
       return null;
     }
 
-    const data = await response.json();
+    const result = db.city(ip);
 
-    if (data.status !== 'success') {
-      console.error(`Geolocation lookup failed: ${data.message}`);
-      geoCache.set(ip, { data: null, timestamp: Date.now() });
+    if (!result) {
       return null;
     }
 
     const geo: GeoLocation = {
-      lat: data.lat,
-      lng: data.lon,
-      city: data.city || 'Unknown',
-      region: data.regionName || data.region || 'Unknown',
-      country: data.country || 'Unknown',
-      countryCode: data.countryCode || 'XX',
-      timezone: data.timezone || 'UTC',
-      isp: data.isp || 'Unknown',
-      org: data.org || 'Unknown',
-      as: data.as || 'Unknown',
+      lat: result.location?.latitude || 0,
+      lng: result.location?.longitude || 0,
+      city: result.city?.names?.en || 'Unknown',
+      region: result.subdivisions?.[0]?.names?.en || 'Unknown',
+      country: result.country?.names?.en || 'Unknown',
+      countryCode: result.country?.isoCode || 'XX',
+      timezone: result.location?.timeZone || 'UTC',
+      isp: result.traits?.isp || result.traits?.organization || 'Unknown',
+      org: result.traits?.organization || 'Unknown',
+      as: result.traits?.autonomousSystemOrganization || 'Unknown',
     };
 
-    geoCache.set(ip, { data: geo, timestamp: Date.now() });
     return geo;
   } catch (error) {
-    console.error('Geolocation lookup error:', error);
+    // Silently handle lookup errors (invalid IPs, etc.)
     return null;
   }
 }
@@ -73,6 +80,7 @@ function isPrivateIP(ip: string): boolean {
   if (
     ip === '127.0.0.1' ||
     ip === 'localhost' ||
+    ip === 'unknown' ||
     ip.startsWith('10.') ||
     ip.startsWith('172.16.') ||
     ip.startsWith('172.17.') ||
@@ -103,18 +111,3 @@ function isPrivateIP(ip: string): boolean {
 
   return false;
 }
-
-/**
- * Clear expired cache entries
- */
-export function cleanupGeoCache(): void {
-  const now = Date.now();
-  for (const [ip, entry] of geoCache.entries()) {
-    if (now - entry.timestamp > CACHE_TTL) {
-      geoCache.delete(ip);
-    }
-  }
-}
-
-// Run cache cleanup every 10 minutes
-setInterval(cleanupGeoCache, 10 * 60 * 1000);

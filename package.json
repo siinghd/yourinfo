@@ -11,11 +11,13 @@
   },
   "dependencies": {
     "@cesium/widgets": "^14.1.0",
+    "@maxmind/geoip2-node": "^6.3.4",
     "@types/three": "^0.182.0",
     "@types/topojson-client": "^3.1.5",
     "cesium": "^1.136.0",
     "globe.gl": "^2.45.0",
     "hono": "^4.11.1",
+    "maxmind": "^5.0.1",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "redis": "^5.10.0",

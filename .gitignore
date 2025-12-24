@@ -25,6 +25,9 @@ lerna-debug.log*
 .env.production
 .env*.local
 
+# PM2 ecosystem config (contains secrets)
+ecosystem.config.cjs
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

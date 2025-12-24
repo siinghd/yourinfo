@@ -1,12 +1,23 @@
 /**
  * YourInfo Backend Server
  * Bun + Hono with WebSocket support
+ * Supports multiple instances with shared visitor state via Redis
  */
 
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { getGeolocation } from './geolocation';
-import { generateAIProfile, trackUniqueVisitor, getTotalUniqueVisitors } from './ai-profiler';
+import { generateAIProfile, trackUniqueVisitor, getTotalUniqueVisitors, type GeoData } from './ai-profiler';
+import {
+  initSharedVisitors,
+  onVisitorEvent,
+  publishVisitorJoined,
+  publishVisitorLeft,
+  publishVisitorUpdated,
+  getAllSharedVisitors,
+  getSharedOnlineCount,
+  isSharedVisitorsConnected,
+} from './shared-visitors';
 import type {
   VisitorInfo,
   ServerInfo,
@@ -20,22 +31,66 @@ import type {
 const app = new Hono();
 const PORT = parseInt(process.env.PORT || '3020', 10);
 
-/** Active visitors map */
-const visitors = new Map<string, VisitorInfo>();
+/** Local visitors map (this instance only) */
+const localVisitors = new Map<string, VisitorInfo>();
 
-/** WebSocket connections map */
+/** All visitors including from other instances (for display) */
+const allVisitors = new Map<string, VisitorInfo>();
+
+/** WebSocket connections map (local only) */
 const connections = new Map<string, WebSocket>();
+
+// Initialize shared visitors via Redis
+initSharedVisitors().then((connected) => {
+  if (connected) {
+    console.log('Shared visitor state enabled (Redis connected)');
+
+    // Listen for events from other instances
+    onVisitorEvent((event) => {
+      if (event.type === 'joined') {
+        allVisitors.set(event.visitor.id, event.visitor);
+        // Broadcast to local websockets
+        broadcast({
+          type: 'visitor_joined',
+          payload: { visitor: redactVisitorInfo(event.visitor) } as VisitorEventPayload,
+        });
+      } else if (event.type === 'left') {
+        allVisitors.delete(event.visitor.id);
+        broadcast({
+          type: 'visitor_left',
+          payload: { visitor: redactVisitorInfo(event.visitor) } as VisitorEventPayload,
+        });
+      } else if (event.type === 'updated') {
+        allVisitors.set(event.visitor.id, event.visitor);
+        broadcast({
+          type: 'visitor_updated',
+          payload: { visitor: redactVisitorInfo(event.visitor) } as VisitorEventPayload,
+        });
+      }
+    });
+  } else {
+    console.log('Running in single-instance mode (Redis not available)');
+  }
+});
 
 // Enable CORS for development
 app.use('*', cors());
 
 /** Health check endpoint */
-app.get('/health', (c) => c.json({ status: 'ok', visitors: visitors.size }));
+app.get('/health', async (c) => {
+  const sharedCount = await getSharedOnlineCount();
+  return c.json({
+    status: 'ok',
+    localVisitors: localVisitors.size,
+    totalOnline: sharedCount || allVisitors.size,
+    redisConnected: isSharedVisitorsConnected(),
+  });
+});
 
 /** Get visitor info by ID */
 app.get('/api/visitor/:id', (c) => {
   const id = c.req.param('id');
-  const visitor = visitors.get(id);
+  const visitor = localVisitors.get(id) || allVisitors.get(id);
   if (!visitor) {
     return c.json({ error: 'Visitor not found' }, 404);
   }
@@ -43,16 +98,23 @@ app.get('/api/visitor/:id', (c) => {
 });
 
 /** Get all visitors */
-app.get('/api/visitors', (c) => {
-  return c.json(Array.from(visitors.values()));
+app.get('/api/visitors', async (c) => {
+  // Try to get from Redis first (shared across instances)
+  if (isSharedVisitorsConnected()) {
+    const shared = await getAllSharedVisitors();
+    return c.json(shared);
+  }
+  // Fallback to local + known remote visitors
+  return c.json(Array.from(allVisitors.values()));
 });
 
-/** Get total unique visitors */
+/** Get stats */
 app.get('/api/stats', async (c) => {
   const totalUnique = await getTotalUniqueVisitors();
+  const online = await getSharedOnlineCount();
   return c.json({
-    online: visitors.size,
-    totalUnique,
+    online: online || allVisitors.size,  // Current active connections
+    totalUnique,                           // All-time unique visitors
   });
 });
 
@@ -66,7 +128,20 @@ app.post('/api/profile', async (c) => {
       return c.json({ error: 'clientInfo required' }, 400);
     }
 
-    const result = await generateAIProfile(clientInfo);
+    // Get IP and geo data for more accurate profiling
+    const forwarded = c.req.header('x-forwarded-for');
+    const ip = forwarded?.split(',')[0].trim() || c.req.header('x-real-ip') || 'unknown';
+    const geoResult = await getGeolocation(ip);
+
+    const geo: GeoData | undefined = geoResult ? {
+      city: geoResult.city,
+      region: geoResult.region,
+      country: geoResult.country,
+      isp: geoResult.isp,
+      timezone: geoResult.timezone,
+    } : undefined;
+
+    const result = await generateAIProfile(clientInfo, geo);
 
     return c.json({
       profile: result.profile,
@@ -233,18 +308,30 @@ const server = Bun.serve({
         connectedAt: Date.now(),
       };
 
-      // Store visitor and connection
-      visitors.set(id, visitor);
+      // Store visitor locally and in shared state
+      localVisitors.set(id, visitor);
+      allVisitors.set(id, visitor);
       connections.set(id, ws as unknown as WebSocket);
+
+      // Publish to other instances via Redis
+      publishVisitorJoined(visitor);
 
       // Attach ID to websocket for later reference
       (ws as unknown as { visitorId: string }).visitorId = id;
+
+      // Get all visitors (local + shared from Redis)
+      let allVisitorsList: VisitorInfo[];
+      if (isSharedVisitorsConnected()) {
+        allVisitorsList = await getAllSharedVisitors();
+      } else {
+        allVisitorsList = Array.from(allVisitors.values());
+      }
 
       // Send welcome message with visitor's own info and all current visitors
       // Redact other visitors' sensitive info
       const welcomePayload: WelcomePayload = {
         visitor,
-        visitors: redactVisitorsExcept(Array.from(visitors.values()), id),
+        visitors: redactVisitorsExcept(allVisitorsList, id),
       };
 
       ws.send(JSON.stringify({
@@ -252,7 +339,7 @@ const server = Bun.serve({
         payload: welcomePayload,
       } as WSMessage));
 
-      // Broadcast new visitor to others (redacted)
+      // Broadcast new visitor to local websockets (other instances get via Redis pub/sub)
       broadcast(
         {
           type: 'visitor_joined',
@@ -271,11 +358,15 @@ const server = Bun.serve({
 
         if (data.type === 'client_info') {
           // Update visitor with client info
-          const visitor = visitors.get(visitorId);
+          const visitor = localVisitors.get(visitorId);
           if (visitor) {
             const payload = data.payload as ClientInfoPayload;
             visitor.client = payload.clientInfo;
-            visitors.set(visitorId, visitor);
+            localVisitors.set(visitorId, visitor);
+            allVisitors.set(visitorId, visitor);
+
+            // Publish update to other instances
+            publishVisitorUpdated(visitor);
 
             // Track unique visitor
             if (payload.clientInfo.fingerprintId && payload.clientInfo.crossBrowserId) {
@@ -291,7 +382,7 @@ const server = Bun.serve({
               }));
             }
 
-            // Broadcast redacted info to others
+            // Broadcast redacted info to local websockets
             broadcast({
               type: 'visitor_updated',
               payload: { visitor: redactVisitorInfo(visitor) } as VisitorEventPayload,
@@ -307,12 +398,16 @@ const server = Bun.serve({
       const visitorId = (ws as unknown as { visitorId: string }).visitorId;
 
       if (visitorId) {
-        const visitor = visitors.get(visitorId);
-        visitors.delete(visitorId);
+        const visitor = localVisitors.get(visitorId);
+        localVisitors.delete(visitorId);
+        allVisitors.delete(visitorId);
         connections.delete(visitorId);
 
         if (visitor) {
-          // Broadcast visitor left (redacted)
+          // Publish to other instances
+          publishVisitorLeft(visitor);
+
+          // Broadcast visitor left to local websockets
           broadcast({
             type: 'visitor_left',
             payload: { visitor: redactVisitorInfo(visitor) } as VisitorEventPayload,

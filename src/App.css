@@ -152,6 +152,62 @@ html, body, #root {
   50% { opacity: 0.3; }
 }
 
+/* AI Credits Banner */
+.ai-credits-banner {
+  position: fixed;
+  top: 70px;
+  left: 0;
+  right: 380px;
+  background: linear-gradient(90deg, #ff6b6b, #ff8e53);
+  color: var(--white);
+  padding: 12px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  font-family: 'Oswald', sans-serif;
+  font-size: 1rem;
+  z-index: 100;
+  box-shadow: 0 4px 12px rgba(255, 107, 107, 0.4);
+}
+
+.ai-credits-banner .banner-icon {
+  font-size: 1.5rem;
+  font-weight: bold;
+}
+
+.ai-credits-banner .banner-text {
+  flex: 1;
+  text-align: center;
+}
+
+.ai-credits-banner .banner-link {
+  background: var(--white);
+  color: #ff6b6b;
+  padding: 8px 16px;
+  border-radius: 4px;
+  text-decoration: none;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.ai-credits-banner .banner-link:hover {
+  transform: scale(1.05);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+@media (max-width: 900px) {
+  .ai-credits-banner {
+    right: 0;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 10px 16px;
+    font-size: 0.9rem;
+  }
+}
+
 /* Globe Container - White background with neon glow */
 .globe-container {
   position: fixed;

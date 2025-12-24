@@ -11,7 +11,7 @@ import type { VisitorInfo } from './types';
 import './App.css';
 
 export default function App() {
-  const { connected, visitors, currentVisitor, aiLoading, totalUniqueVisitors } = useWebSocket();
+  const { connected, visitors, currentVisitor, aiLoading, aiCreditsExhausted, totalUniqueVisitors } = useWebSocket();
   const [selectedVisitorId, setSelectedVisitorId] = useState<string | null>(null);
 
   // Get the selected visitor from the visitors array (always up-to-date)
@@ -60,6 +60,24 @@ export default function App() {
           </div>
         </div>
       </header>
+
+      {/* AI Credits Exhausted Banner */}
+      {aiCreditsExhausted && (
+        <div className="ai-credits-banner">
+          <span className="banner-icon">:(</span>
+          <span className="banner-text">
+            AI credits exhausted! Help bring back AI-powered insights with a small tip:
+          </span>
+          <a
+            href="https://www.paypal.com/paypalme/hsiingh"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="banner-link"
+          >
+            Donate via PayPal
+          </a>
+        </div>
+      )}
 
       {/* Globe */}
       <div className="globe-container">

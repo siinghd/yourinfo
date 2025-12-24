@@ -59,6 +59,7 @@ interface UseWebSocketResult {
   currentVisitor: VisitorInfo | null;
   error: string | null;
   aiLoading: boolean;
+  aiCreditsExhausted: boolean;
   totalUniqueVisitors: number;
 }
 
@@ -80,6 +81,7 @@ export function useWebSocket(): UseWebSocketResult {
   const [currentVisitor, setCurrentVisitor] = useState<VisitorInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
+  const [aiCreditsExhausted, setAiCreditsExhausted] = useState(false);
   const [totalUniqueVisitors, setTotalUniqueVisitors] = useState(0);
 
   const wsRef = useRef<WebSocket | null>(null);
@@ -144,31 +146,37 @@ export function useWebSocket(): UseWebSocketResult {
             })
           );
 
-          // Fetch AI profile (cached if already generated)
-          console.log('Fetching AI profile...');
-          setAiLoading(true);
-          const aiResult = await fetchAIProfile(clientInfo);
-          setAiLoading(false);
-
-          if (aiResult.profile) {
-            console.log(`AI profile loaded (source: ${aiResult.source})`);
-            // Update client info with AI profile
-            clientInfo.userProfile = aiResult.profile;
-
-            // Send updated client info
-            ws.send(
-              JSON.stringify({
-                type: 'client_info',
-                payload: { clientInfo },
-              })
-            );
-          } else {
-            console.log('Using local fallback profile');
-          }
-
-          // Start behavior tracking
+          // Start behavior tracking first (don't wait for AI)
           behaviorTracker.start();
           advancedBehaviorTracker.start();
+
+          // Fetch AI profile in background (don't block connection)
+          console.log('Fetching AI profile in background...');
+          setAiLoading(true);
+          fetchAIProfile(clientInfo).then((aiResult) => {
+            setAiLoading(false);
+            if (aiResult.profile) {
+              console.log(`AI profile loaded (source: ${aiResult.source})`);
+              setAiCreditsExhausted(false);
+              clientInfo.userProfile = aiResult.profile;
+              // Send updated client info with AI profile
+              if (ws.readyState === WebSocket.OPEN) {
+                ws.send(
+                  JSON.stringify({
+                    type: 'client_info',
+                    payload: { clientInfo },
+                  })
+                );
+              }
+            } else {
+              console.log('Using local fallback profile - AI credits exhausted');
+              setAiCreditsExhausted(true);
+            }
+          }).catch((err) => {
+            console.error('AI profile error:', err);
+            setAiLoading(false);
+            setAiCreditsExhausted(true);
+          });
 
           // Update behavior data every second
           behaviorIntervalRef.current = setInterval(() => {
@@ -281,6 +289,7 @@ export function useWebSocket(): UseWebSocketResult {
     currentVisitor,
     error,
     aiLoading,
+    aiCreditsExhausted,
     totalUniqueVisitors,
   };
 }
